@@ -50,9 +50,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          # 手動実行で別のブランチを選ぶと、main に入っていない変更をレビューして起票してしまう
-          if [[ "${GITHUB_REF_NAME}" != "${DEFAULT_BRANCH}" ]]; then
-            echo "default branch (${DEFAULT_BRANCH}) 以外では実行しない: ${GITHUB_REF_NAME}"
+          # 手動実行で別のブランチや tag を選ぶと、main に入っていない変更をレビューして起票してしまう
+          if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+            echo "default branch (${DEFAULT_BRANCH}) 以外では実行しない: ${GITHUB_REF}"
             exit 0
           fi
           # 呼び出し元の workflow のファイル名 (github context は呼び出し元を指す)。ブランチ名に @ が入りうるので @refs/ で切る

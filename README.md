@@ -71,7 +71,7 @@ jobs:
 
 self-hosted runner はディスクと状態が job の後も残るので、PR のコード (`mise.toml` や hook) を動かした跡が、同じ runner の後の job に影響しえます。self-hosted runner は、外部の人の PR で workflow が動かず、その runner を使うリポジトリのすべてに同じ人たちが書き込めるときだけ使います。それ以外は GitHub-hosted runner を使います。
 
-check の名前は `<呼び出し側の job の name> / <本体の job の name>` (例: `gitleaks / gitleaks`) になるので、ruleset の required checks にはこの名前で書きます。`.github/jactionlint.yaml` の `required-checks` には書きません。jactionlint は別リポジトリの reusable workflow の中を確かめられず、書くと `unreachable-required-check` で失敗するためです (jactionlint 2.6.0 で確認)。
+check の名前は `<呼び出し側の job の name> / <本体の job の name>` (例: `gitleaks / gitleaks`) になるので、ruleset の required checks にはこの名前で書きます。`.github/jactionlint.yaml` では、`forbidden-uses` の `allow` に `dope-corp/.github/.github/workflows/*` を足し (リポジトリ名だけでは通らない)、`required-checks` には書きません。jactionlint は別リポジトリの reusable workflow の中を確かめられず、書くと `unreachable-required-check` で失敗するためです (jactionlint 2.6.0 で確認)。
 
 `reusable-pr-title.yaml` は、呼び出し側の `.pre-commit-config.yaml` にある commitlint の `commit-msg` hook (`id: commitlint`) で、PR タイトルと、squash merge で付く ` (#<番号>)` を足したタイトルを検査します。hook は dope-corp/template と同じく `language: node` で commitlint を入れる形にします。
 
