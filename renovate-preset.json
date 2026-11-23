@@ -90,7 +90,7 @@
         "/^\\.github/workflows/.+\\.ya?ml$/"
       ],
       "matchStrings": [
-        "# renovate: depName=(?<depName>jdx/mise)\\n\\s+(?:mise-)?version: (?<currentValue>\\d+\\.\\d+\\.\\d+)"
+        "# renovate: depName=(?<depName>jdx/mise)\\n\\s+(?:mise-)?version: [\"']?(?<currentValue>\\d+\\.\\d+\\.\\d+)[\"']?\\s"
       ],
       "datasourceTemplate": "github-releases",
       "extractVersionTemplate": "^v(?<version>.+)$"

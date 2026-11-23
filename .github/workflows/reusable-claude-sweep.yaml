@@ -50,6 +50,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
+          # 手動実行で別のブランチを選ぶと、main に入っていない変更をレビューして起票してしまう
+          if [[ "${GITHUB_REF_NAME}" != "${DEFAULT_BRANCH}" ]]; then
+            echo "default branch (${DEFAULT_BRANCH}) 以外では実行しない: ${GITHUB_REF_NAME}"
+            exit 0
+          fi
           # 呼び出し元の workflow のファイル名 (github context は呼び出し元を指す)。ブランチ名に @ が入りうるので @refs/ で切る
           workflow="${GITHUB_WORKFLOW_REF%%@refs/*}"
           workflow="${workflow##*/}"
@@ -96,12 +101,16 @@ jobs:
           # 未指定だと action は OIDC で Claude GitHub App の token を取得し、job の permissions に
           # 縛られない。github.token を渡して job の権限に閉じる
           github_token: ${{ github.token }}
+          # default は --allowedTools に無い操作を拒否する (承認する人がいないため)。既定の auto mode では、
+          # 安全性の判定を通れば列挙していない操作も実行される
           claude_args: |
+            --permission-mode default
             --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh search issues:*),Bash(gh issue create:*),Bash(gh label list:*),Bash(gh label create:*)"
           prompt: |
             このリポジトリの定期レビュー sweep を実行してください。
 
             対象範囲: ${{ needs.plan.outputs.base }}..${{ needs.plan.outputs.head }}
+            リポジトリの公開範囲: ${{ github.event.repository.private && 'private' || 'public' }}
 
             手順:
             1. `git log --oneline <base>..<head>` と `git diff <base>..<head>` で変更内容を把握する。
@@ -119,6 +128,10 @@ jobs:
                - 推奨する修正方針
                - severity (high/medium/low) と confidence (high/medium/low)
                - label: claude-sweep
-            6. 修正 PR は作らない。コードも変更しない。issue 起票がこのタスクの終点。
+            6. 公開範囲が public のときは、悪用できる脆弱性 (security の観点の指摘のうち、攻撃に使えるもの) の
+               対象箇所・内容・根拠・修正方針を issue にも最終出力にも書かない。issue と Actions のログは誰でも
+               見られるため。代わりに「非公開で確認が必要なセキュリティ上の指摘がある」とだけ、対象範囲を添えて
+               1 件起票する。
+            7. 修正 PR は作らない。コードも変更しない。issue 起票がこのタスクの終点。
 
             最後に、起票した issue の一覧と、重複としてスキップした指摘の要約を出力してください。

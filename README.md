@@ -30,16 +30,7 @@ dope-corp のリポジトリが共通で使う設定です。各リポジトリ�
 
 ### reusable workflow
 
-呼び出し側の workflow に trigger・`concurrency`・job の `permissions` を書き、本体を commit SHA で固定して呼びます (版はコメントで併記し、Renovate が更新します)。check の名前は `<呼び出し側の job の name> / <本体の job の name>` になるので、ruleset の required checks と `.github/jactionlint.yaml` の `required-checks` はこの名前で書きます。`.github/jactionlint.yaml` の `forbidden-uses` の `allow` には `dope-corp/.github` を足します。
-
-self-hosted runner はディスクと状態が job の後も残り、ほかのリポジトリの job とも共有します。self-hosted runner を指定するのは、外部の人の PR で workflow が動かないリポジトリ (fork を禁止した private リポジトリ等) だけにします。
-
-共通の入力です。
-
-| 入力           | 内容                                                                                                                                                                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `runs-on`      | job の `runs-on` に渡す値の JSON。既定は `"ubuntu-latest"`。例: `'["self-hosted", "Linux", "X64"]'`。`self-hosted` を含むと mise の cache を使わない (ディスクが残るので要らず、大きなツールがあると save / restore で timeout する) |
-| `mise-version` | mise 本体の版 (claude-sweep を除く)。空なら、runner や cache に残った版か、mise-action が選ぶ公開から 24 時間たった最新版を使う。self-hosted runner では版がずれないよう指定する                                                     |
+呼び出し側の workflow には trigger・`concurrency`・job の `permissions` を書き、本体を commit SHA で固定して呼びます。版はコメントで併記し、以後は Renovate が更新します。版の tag が指す commit SHA は `gh api repos/dope-corp/.github/commits/<tag> --jq .sha` で得られます。
 
 ```yaml
 # .github/workflows/gitleaks.yaml
@@ -63,9 +54,28 @@ jobs:
       mise-version: 2026.11.8
 ```
 
-`reusable-pr-title.yaml` は、`pull_request` の `types: [opened, edited, synchronize, reopened]` で呼びます。呼び出し側の `.pre-commit-config.yaml` にある commitlint の `commit-msg` hook (`id: commitlint`) で検査するので、hook は `language: node` で commitlint を入れる形にします (テンプレートと同じ)。
+| workflow                     | 呼び出し側の trigger                                               | 呼び出し側の job の `permissions`                  | 呼び出し側の `mise.toml` の `[tools]` に固定するもの |
+| ---------------------------- | ------------------------------------------------------------------ | -------------------------------------------------- | ---------------------------------------------------- |
+| `reusable-gitleaks.yaml`     | `pull_request` (必要なら `schedule`)                               | `contents: read`                                   | `gitleaks`                                           |
+| `reusable-pr-title.yaml`     | `pull_request` の `types: [opened, edited, synchronize, reopened]` | `contents: read`                                   | `prek`                                               |
+| `reusable-claude-sweep.yaml` | `schedule` と `workflow_dispatch`                                  | `contents: read`・`actions: read`・`issues: write` | -                                                    |
 
-`reusable-claude-sweep.yaml` は `schedule` と `workflow_dispatch` で呼びます。job の `permissions` に `contents: read`・`actions: read`・`issues: write` を許可し、`secrets` で `CLAUDE_CODE_OAUTH_TOKEN` を渡します。レビューの起点は、呼び出し側の workflow の前回成功した run です。 self-hosted runner で動かすときは、runner に `gh` が要ります。
+本体は呼び出し側の `mise.toml` と `mise.lock` でツールを入れるので、上の列のツールを `[tools]` に固定して `mise.lock` に含めます (dope-corp/template から作ったリポジトリでは固定済み)。
+
+共通の入力です。
+
+| 入力           | 内容                                                                                                                                                                                                                                          |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runs-on`      | job の `runs-on` に渡す値の JSON。既定は `"ubuntu-latest"`。例: `'["self-hosted", "Linux", "X64"]'`。`self-hosted` の label を含むと mise の cache を使わない (ディスクが残るので要らず、大きなツールがあると save / restore で timeout する) |
+| `mise-version` | mise 本体の版 (claude-sweep を除く)。空なら、runner や cache に残った版か、mise-action が選ぶ公開から 24 時間たった最新版を使う。self-hosted runner では版がずれないよう指定する                                                              |
+
+self-hosted runner はディスクと状態が job の後も残るので、PR のコード (`mise.toml` や hook) を動かした跡が、同じ runner の後の job に影響しえます。self-hosted runner は、外部の人の PR で workflow が動かず、その runner を使うリポジトリのすべてに同じ人たちが書き込めるときだけ使います。それ以外は GitHub-hosted runner を使います。
+
+check の名前は `<呼び出し側の job の name> / <本体の job の name>` (例: `gitleaks / gitleaks`) になるので、ruleset の required checks にはこの名前で書きます。`.github/jactionlint.yaml` の `required-checks` には書きません。jactionlint は別リポジトリの reusable workflow の中を確かめられず、書くと `unreachable-required-check` で失敗するためです (jactionlint 2.6.0 で確認)。
+
+`reusable-pr-title.yaml` は、呼び出し側の `.pre-commit-config.yaml` にある commitlint の `commit-msg` hook (`id: commitlint`) で、PR タイトルと、squash merge で付く ` (#<番号>)` を足したタイトルを検査します。hook は dope-corp/template と同じく `language: node` で commitlint を入れる形にします。
+
+`reusable-claude-sweep.yaml` は、`secrets` で `CLAUDE_CODE_OAUTH_TOKEN` を受け取ります。レビューの起点は呼び出し側の workflow の前回成功した run なので、ほかの job を持たない専用の workflow から呼びます。default branch 以外の手動実行ではレビューしません。Claude が使えるのは差分と issue の読み書きに要るコマンドだけで、public リポジトリでは、悪用できる脆弱性の中身を issue に書かず、非公開での確認が要ることだけを起票します。self-hosted runner で動かすときは、runner に `gh` が要ります。
 
 ## 変更を公開する
 
