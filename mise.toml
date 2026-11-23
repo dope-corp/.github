@@ -97,17 +97,18 @@ if [[ -z "${last}" ]]; then
   fi
   next="v1.0.0"
 else
-  # tag を作った後に Release の作成が失敗した版は、tag の状態を人が確かめてから Release を作る
-  if ! view="$(gh release view "${last}" --repo "${repo}" 2>&1)"; then
-    if grep -q 'release not found' <<< "${view}"; then
+  if ! git merge-base --is-ancestor "${last_sha}" "${target}"; then
+    echo "${last} (${last_sha}) is not an ancestor of main (${target}); check the tags and run the task again" >&2
+    exit 1
+  fi
+  # tag を作った後に Release の作成が失敗した版は、tag の状態を人が確かめてから Release を作る。
+  # gh release view は取得の失敗でも release not found を返しうるので、HTTP の状態を返す API で 404 だけを不在とみなす
+  if ! view="$(gh api "repos/${repo}/releases/tags/${last}" --silent 2>&1)"; then
+    if grep -q 'HTTP 404' <<< "${view}"; then
       echo "${last} (${last_sha}) has no GitHub Release; check the tag and run: gh release create ${last} --repo ${repo} --verify-tag --generate-notes" >&2
     else
       echo "${view}" >&2
     fi
-    exit 1
-  fi
-  if ! git merge-base --is-ancestor "${last_sha}" "${target}"; then
-    echo "${last} (${last_sha}) is not an ancestor of main (${target}); check the tags and run the task again" >&2
     exit 1
   fi
   if git diff --quiet "${last_sha}" "${target}" -- "${paths[@]}"; then
