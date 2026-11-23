@@ -38,6 +38,9 @@ jobs:
         uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with:
           version: ${{ inputs.mise-version }}
+          # self-hosted runner はディスクが残るので cache は要らない。cache は mise の全ツールを save / restore するので、
+          # 大きなツール (flutter 等) が入った runner では timeout する
+          cache: ${{ !contains(inputs.runs-on, 'self-hosted') }}
           install_args: gitleaks
 
       # ツールを指定しない mise exec は mise.toml の全ツールを解決しようとするので、gitleaks に限る
