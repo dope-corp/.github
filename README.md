@@ -75,7 +75,7 @@ jobs:
 mise run release
 ```
 
-タスクは、手元の clone ではなく dope-corp/.github の main と公開済みの tag から次の版を計算し、前の版からの commit を表示して確認を求めます。確認を待つ間に main や最新の版が変わっていたら、何も作らずに止まります。shallow clone では使えません。版は、前の tag 以降に上の 2 種類のファイルを変えた commit の件名と本文 (squash merge なので PR タイトル) のうち、一番大きい変更で決まります。上の 2 種類のファイルが変わっていなければ tag を作りません。
+タスクは、手元の clone ではなく dope-corp/.github の main と公開済みの tag から次の版を計算し、前の版からの commit を表示して確認を求めます。確認を待つ間に main や最新の版が変わっていたら、何も作らずに止まります。tag だけがあって GitHub Release が無い版 (前回の Release の作成の失敗) があれば、その Release を作り直します。shallow clone では使えません。版は、前の tag 以降に上の 2 種類のファイルを変えた commit の件名と本文 (squash merge なので PR タイトル) のうち、一番大きい変更で決まります。上の 2 種類のファイルが変わっていなければ tag を作りません。
 
 | commit の件名・本文                                 | 版    |
 | --------------------------------------------------- | ----- |
@@ -85,7 +85,7 @@ mise run release
 
 入力・secret の削除や改名、必須化のように呼び出し側の変更が要るものは、PR タイトルに `!` を付けて major にします。そのため、このリポジトリは squash merge の commit title を PR タイトルにする設定 (`squash_merge_commit_title: PR_TITLE`) にし、merge の画面で件名を書き換えません。issue・PR の雛形と `SECURITY.md` は版を持たず、main の内容がそのまま各リポジトリに効きます。
 
-tag を CI で作らないのは、`GITHUB_TOKEN` が `workflows` 権限を持てず、workflow ファイルを変えた commit への tag の作成を拒否されることがあるためです。手元の `gh` の認証も、拒否されたときは `workflow` scope (fine-grained PAT では Workflows の権限) を足します。
+tag を CI で作らないのは、`GITHUB_TOKEN` が `workflows` 権限を持てず、workflow ファイルを変えた commit への tag の作成を拒否されることがあるためです。手元の `gh` の認証も、`workflows` 権限が無いとして拒否されたときは `workflow` scope (fine-grained PAT では Workflows の権限) を足します。
 
 各リポジトリでは Renovate が新しい版への更新 PR を作り、minor / patch は CI が通れば自動で merge します (このリポジトリの更新は公開から 7 日待たない)。ただし、同じ PR にまとめられた更新に pin・digest の更新が 1 つでも入ると、PR 全体が人手の merge になります。
 
