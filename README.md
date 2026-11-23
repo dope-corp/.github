@@ -69,27 +69,27 @@ jobs:
 
 ## 変更を公開する
 
-`renovate-preset.json` か `.github/workflows/reusable-*.yaml` を変えた PR を main に merge すると、`release.yaml` が次の版の tag と GitHub Release を作ります。版は main の commit の件名 (squash merge なので PR タイトル) で決まります。
+`renovate-preset.json` か `.github/workflows/reusable-*.yaml` を変えた PR を main に merge したら、手元で次を実行して、次の版の tag と GitHub Release を作ります。tag を作るまで、変更は各リポジトリに届きません。
 
-| PR タイトル・commit の本文                          | 版    |
+```sh
+mise run release
+```
+
+タスクは origin の main を基準に次の版を計算し、前の版からの commit を表示して確認を求めます。版は、前の tag 以降に上の 2 種類のファイルを変えた commit の件名と本文 (squash merge なので PR タイトル) のうち、一番大きい変更で決まります。上の 2 種類のファイルが変わっていなければ tag を作りません。
+
+| commit の件名・本文                                 | 版    |
 | --------------------------------------------------- | ----- |
 | `<type>!: ...` か、本文に `BREAKING CHANGE:` がある | major |
 | `feat: ...`                                         | minor |
 | それ以外 (`fix: ...` 等)                            | patch |
 
-このリポジトリは squash merge の commit title を PR タイトルにする設定 (`squash_merge_commit_title: PR_TITLE`) にし、merge の画面で件名を書き換えません。前の tag 以降に利用側のファイルを変えた commit が複数あれば、一番大きい変更で版を上げます。入力・secret の削除や改名、必須化のように呼び出し側の変更が要るものは、PR タイトルに `!` を付けて major にします。上の 2 種類以外のファイル (README 等) だけを変えた merge では tag を作りません。issue・PR の雛形と `SECURITY.md` は版を持たず、main の内容がそのまま各リポジトリに効きます。
+入力・secret の削除や改名、必須化のように呼び出し側の変更が要るものは、PR タイトルに `!` を付けて major にします。そのため、このリポジトリは squash merge の commit title を PR タイトルにする設定 (`squash_merge_commit_title: PR_TITLE`) にし、merge の画面で件名を書き換えません。issue・PR の雛形と `SECURITY.md` は版を持たず、main の内容がそのまま各リポジトリに効きます。
+
+tag を CI で作らないのは、`GITHUB_TOKEN` が `workflows` 権限を持てず、workflow ファイルを変えた commit への tag の作成を拒否されることがあるためです。手元の `gh` の認証には `workflow` scope が要ります (`gh auth status` の Token scopes で確かめる)。
 
 各リポジトリでは Renovate が新しい版への更新 PR を作り、minor / patch は CI が通れば自動で merge します (このリポジトリの更新は公開から 7 日待たない)。ただし、同じ PR にまとめられた更新に pin・digest の更新が 1 つでも入ると、PR 全体が人手の merge になります。
 
 このリポジトリの workflow は本体を `$/` で呼ぶので、PR の CI が変更後の本体で動きます。
-
-### release の GitHub App (初回だけ)
-
-`GITHUB_TOKEN` は `workflows` 権限を持てず、workflow ファイルを変えた commit への tag の作成を拒否されることがあるので、tag は GitHub App の token で作ります。
-
-1. organization の **Settings → Developer settings → GitHub Apps → New GitHub App** で App を作る。Webhook は無効にし、Repository permissions は **Contents: Read and write** と **Workflows: Read and write** だけにする。
-2. App を dope-corp/.github だけにインストールし、private key を発行する。
-3. このリポジトリに environment `release` を作り、Deployment branches を `main` に限る。environment の variable `RELEASE_APP_CLIENT_ID` に App の Client ID を、secret `RELEASE_APP_PRIVATE_KEY` に private key を設定する。
 
 ## このリポジトリの開発
 
@@ -112,6 +112,12 @@ README.md のタスク一覧を mise.toml から生成し直す
 - **Usage:** `pre-commit`
 
 全ファイルに pre-commit の hook を実行する (CI の prek job のうち online の検査を除く部分)
+
+## `release`
+
+- **Usage:** `release`
+
+preset と reusable workflow の変更を merge した後に、main に次の版の tag と GitHub Release を作る
 
 ## `template-diff`
 

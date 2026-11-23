@@ -9,6 +9,8 @@ typos = "1.52.2"
 zizmor = "1.32.0"
 # jactionlint は PATH の shellcheck で run: を検査するため、ローカルと CI で揃えて pin する
 shellcheck = "0.11.0"
+# release タスクが tag と GitHub Release を作るのに使う
+gh = "2.104.0"
 
 [env]
 # ローカルだけの値は mise.local.toml で上書きする (.gitignore により追跡されない)。
@@ -53,6 +55,59 @@ while IFS=$'\t' read -r sha f; do
   diff -u --label "template/${f}" --label "${f}" "${upstream}" "${f}" || true
 done <<< "${entries}"
 exit "${failed}"
+'''
+
+# GITHUB_TOKEN は workflows 権限を持てず、workflow ファイルを変えた commit への tag の作成を拒否されることがあるので、
+# CI ではなく手元の gh の認証 (workflow scope を含む) で作る
+[tasks.release]
+description = "preset と reusable workflow の変更を merge した後に、main に次の版の tag と GitHub Release を作る"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+repo="dope-corp/.github"
+head="origin/main"
+# 利用側が版を固定して参照するファイル
+paths=(renovate-preset.json '.github/workflows/reusable-*.yaml')
+git fetch --quiet --tags origin main
+last="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "${head}" 2>/dev/null || true)"
+if [[ -z "${last}" ]]; then
+  next="v1.0.0"
+elif git diff --quiet "${last}" "${head}" -- "${paths[@]}"; then
+  # 利用側に届くファイルが変わらない版で、全リポジトリに Renovate の更新 PR を作らない
+  echo "No change to the preset or reusable workflows since ${last}; nothing to release"
+  exit 0
+else
+  # 前の tag 以降の commit のうち、利用側のファイルを変えたものの一番大きい変更で版を上げる
+  breaking_re='^[a-z]+(\([^)]*\))?!:'
+  feat_re='^feat(\([^)]*\))?:'
+  bump="patch"
+  shas="$(git log --format=%H "${last}..${head}" -- "${paths[@]}")"
+  while read -r sha; do
+    subject="$(git log -1 --format=%s "${sha}")"
+    body="$(git log -1 --format=%b "${sha}")"
+    if [[ "${subject}" =~ ${breaking_re} ]] || grep -q '^BREAKING[ -]CHANGE:' <<< "${body}"; then
+      bump="major"
+      break
+    elif [[ "${subject}" =~ ${feat_re} ]]; then
+      bump="minor"
+    fi
+  done <<< "${shas}"
+  IFS=. read -r major minor patch <<< "${last#v}"
+  case "${bump}" in
+    major) next="v$((major + 1)).0.0" ;;
+    minor) next="v${major}.$((minor + 1)).0" ;;
+    *) next="v${major}.${minor}.$((patch + 1))" ;;
+  esac
+fi
+target="$(git rev-parse "${head}")"
+echo "${last:-"(no release yet)"} -> ${next}"
+git log --oneline "${last:+${last}..}${head}" -- "${paths[@]}"
+read -r -p "Create ${next} at ${target}? [y/N] " answer
+if [[ "${answer}" != "y" ]]; then
+  echo "Aborted" >&2
+  exit 1
+fi
+gh release create "${next}" --repo "${repo}" --target "${target}" --generate-notes
 '''
 
 [hooks]
