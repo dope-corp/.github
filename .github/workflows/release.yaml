@@ -53,7 +53,9 @@ jobs:
             shas="$(git log --format=%H "${last}..HEAD" -- renovate-preset.json '.github/workflows/reusable-*.yaml')"
             while read -r sha; do
               subject="$(git log -1 --format=%s "${sha}")"
-              if [[ "${subject}" =~ ${breaking_re} ]] || git log -1 --format=%b "${sha}" | grep -q '^BREAKING[ -]CHANGE:'; then
+              # git log を grep に直接つなぐと、一致した時点で grep が閉じて git log が SIGPIPE で失敗し、pipefail で条件が偽になる
+              body="$(git log -1 --format=%b "${sha}")"
+              if [[ "${subject}" =~ ${breaking_re} ]] || grep -q '^BREAKING[ -]CHANGE:' <<< "${body}"; then
                 bump="major"
                 break
               elif [[ "${subject}" =~ ${feat_re} ]]; then
