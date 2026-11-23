@@ -58,30 +58,51 @@ exit "${failed}"
 '''
 
 # GITHUB_TOKEN は workflows 権限を持てず、workflow ファイルを変えた commit への tag の作成を拒否されることがあるので、
-# CI ではなく手元の gh の認証 (workflow scope を含む) で作る
+# CI ではなく手元の gh の認証で作る
 [tasks.release]
 description = "preset と reusable workflow の変更を merge した後に、main に次の版の tag と GitHub Release を作る"
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
 repo="dope-corp/.github"
-head="origin/main"
+url="https://github.com/${repo}.git"
 # 利用側が版を固定して参照するファイル
 paths=(renovate-preset.json '.github/workflows/reusable-*.yaml')
-git fetch --quiet --tags origin main
-last="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "${head}" 2>/dev/null || true)"
+
+# 版の計算に使う main と最新の版の tag は、手元の clone (origin・取得済みの tag) ではなく公開先から取る
+latest_release() {
+  git ls-remote --tags --refs "${url}" 'v*' | sed 's|.*refs/tags/||' | grep -E '^v[0-9]+[.][0-9]+[.][0-9]+$' | sort -V | tail -n 1 || true
+}
+main_sha() {
+  git ls-remote "${url}" refs/heads/main | cut -f 1
+}
+if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+  echo "This clone is shallow; run 'git fetch --unshallow' first so that the previous release is reachable" >&2
+  exit 1
+fi
+target="$(main_sha)"
+last="$(latest_release)"
+git fetch --quiet "${url}" "${target}"
+
 if [[ -z "${last}" ]]; then
+  if ! git cat-file -e "${target}:renovate-preset.json" 2>/dev/null; then
+    echo "renovate-preset.json is not on main yet; nothing to release" >&2
+    exit 1
+  fi
   next="v1.0.0"
-elif git diff --quiet "${last}" "${head}" -- "${paths[@]}"; then
-  # 利用側に届くファイルが変わらない版で、全リポジトリに Renovate の更新 PR を作らない
-  echo "No change to the preset or reusable workflows since ${last}; nothing to release"
-  exit 0
 else
+  git fetch --quiet "${url}" "refs/tags/${last}"
+  last_sha="$(git rev-parse FETCH_HEAD^{commit})"
+  if git diff --quiet "${last_sha}" "${target}" -- "${paths[@]}"; then
+    # 利用側に届くファイルが変わらない版で、全リポジトリに Renovate の更新 PR を作らない
+    echo "No change to the preset or reusable workflows since ${last}; nothing to release"
+    exit 0
+  fi
   # 前の tag 以降の commit のうち、利用側のファイルを変えたものの一番大きい変更で版を上げる
   breaking_re='^[a-z]+(\([^)]*\))?!:'
   feat_re='^feat(\([^)]*\))?:'
   bump="patch"
-  shas="$(git log --format=%H "${last}..${head}" -- "${paths[@]}")"
+  shas="$(git log --format=%H "${last_sha}..${target}" -- "${paths[@]}")"
   while read -r sha; do
     subject="$(git log -1 --format=%s "${sha}")"
     body="$(git log -1 --format=%b "${sha}")"
@@ -99,15 +120,22 @@ else
     *) next="v${major}.${minor}.$((patch + 1))" ;;
   esac
 fi
-target="$(git rev-parse "${head}")"
+
 echo "${last:-"(no release yet)"} -> ${next}"
-git log --oneline "${last:+${last}..}${head}" -- "${paths[@]}"
+git log --oneline "${last:+${last_sha}..}${target}" -- "${paths[@]}"
 read -r -p "Create ${next} at ${target}? [y/N] " answer
 if [[ "${answer}" != "y" ]]; then
   echo "Aborted" >&2
   exit 1
 fi
-gh release create "${next}" --repo "${repo}" --target "${target}" --generate-notes
+# 確認を待つ間に main が進んだり別の人が版を作ったりしていたら、計算し直してもらう
+if [[ "$(main_sha)" != "${target}" || "$(latest_release)" != "${last}" ]]; then
+  echo "main or the latest release changed while waiting; run the task again" >&2
+  exit 1
+fi
+# 同じ名前の tag が既にあれば失敗させ、確認した commit 以外に Release を作らない
+gh api --silent "repos/${repo}/git/refs" -f "ref=refs/tags/${next}" -f "sha=${target}"
+gh release create "${next}" --repo "${repo}" --verify-tag --generate-notes
 '''
 
 [hooks]
