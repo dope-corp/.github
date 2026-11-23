@@ -14,6 +14,7 @@
 !/.github/workflows/claude.yaml
 !/.github/workflows/claude-sweep.yaml
 !/.github/workflows/pr-title.yaml
+!/.github/workflows/release.yaml
 !/.github/workflows/reusable-claude-sweep.yaml
 !/.github/workflows/reusable-gitleaks.yaml
 !/.github/workflows/reusable-pr-title.yaml

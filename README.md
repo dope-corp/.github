@@ -12,7 +12,7 @@ dope-corp のリポジトリが共通で使う設定です。各リポジトリ�
 | `.github/workflows/reusable-claude-sweep.yaml`                                         | 前回成功した run 以降の差分を Claude Code がレビューし、指摘を `claude-sweep` label の issue にする |
 | `.github/ISSUE_TEMPLATE/` / `.github/PULL_REQUEST_TEMPLATE.md` / `.github/SECURITY.md` | 自前のファイルを持たないリポジトリ (private を含む) に適用される organization の既定                |
 
-新しいリポジトリは [dope-corp/template](https://github.com/dope-corp/template) から作ります。テンプレートに入っている呼び出し側の設定が、ここを参照します。
+新しいリポジトリは [dope-corp/template](https://github.com/dope-corp/template) から作り、下の「使い方」に従ってここを参照します。
 
 ## 使い方
 
@@ -67,9 +67,27 @@ jobs:
 
 ## 変更を公開する
 
-main に merge した後、`v<major>.<minor>.<patch>` の tag を打ちます。各リポジトリでは Renovate が更新の PR を作り、minor / patch は CI が通れば自動で merge します (このリポジトリの更新は公開から 7 日待たない)。入力・secret の削除や改名、必須化のように呼び出し側の変更が要るものは major にします。
+`renovate-preset.json` か `.github/workflows/reusable-*.yaml` を変えた PR を main に merge すると、`release.yaml` が次の版の tag と GitHub Release を作ります。版は main の commit の件名 (squash merge なので PR タイトル) で決まります。
+
+| PR タイトル・commit の本文                          | 版    |
+| --------------------------------------------------- | ----- |
+| `<type>!: ...` か、本文に `BREAKING CHANGE:` がある | major |
+| `feat: ...`                                         | minor |
+| それ以外 (`fix: ...` 等)                            | patch |
+
+入力・secret の削除や改名、必須化のように呼び出し側の変更が要るものは、PR タイトルに `!` を付けて major にします。上の 2 種類以外のファイル (README 等) だけを変えた merge では tag を作りません。issue・PR の雛形と `SECURITY.md` は版を持たず、main の内容がそのまま各リポジトリに効きます。
+
+各リポジトリでは Renovate が新しい版への更新 PR を作り、minor / patch は CI が通れば自動で merge します (このリポジトリの更新は公開から 7 日待たない)。
 
 このリポジトリの workflow は本体を `$/` で呼ぶので、PR の CI が変更後の本体で動きます。
+
+### release の GitHub App (初回だけ)
+
+`GITHUB_TOKEN` は `workflows` 権限を持てず、workflow ファイルを変えた commit への tag の作成を拒否されることがあるので、tag は GitHub App の token で作ります。
+
+1. organization の **Settings → Developer settings → GitHub Apps → New GitHub App** で App を作る。Webhook は無効にし、Repository permissions は **Contents: Read and write** と **Workflows: Read and write** だけにする。
+2. App を dope-corp/.github だけにインストールし、private key を発行する。
+3. このリポジトリに environment `release` を作り、Deployment branches を `main` に限る。environment の variable `RELEASE_APP_CLIENT_ID` に App の Client ID を、secret `RELEASE_APP_PRIVATE_KEY` に private key を設定する。
 
 ## このリポジトリの開発
 

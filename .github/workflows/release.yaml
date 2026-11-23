@@ -1,0 +1,78 @@
+name: Release
+
+# 利用側が版を固定して参照するファイル (Renovate preset と reusable workflow) を変えた merge のたびに、次の版の tag と
+# GitHub Release を作る。版は main の commit の件名 (squash merge の PR タイトル) の Conventional Commits で決める
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # GITHUB_TOKEN は workflows 権限を持てず、workflow ファイルを変えた commit への tag の作成を拒否されることがあるので、
+    # workflows 権限を持つ GitHub App の token で作る。App の秘密鍵はこの environment にだけ置く
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # 前の tag との差分と、tag の一覧が要る
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Determine the next version
+        id: version
+        run: |
+          last="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)"
+          if [[ -z "${last}" ]]; then
+            next="v1.0.0"
+          elif git diff --quiet "${last}" HEAD -- renovate-preset.json '.github/workflows/reusable-*.yaml'; then
+            # 利用側に届くファイルが変わらない merge で、全リポジトリに Renovate の更新 PR を作らない
+            echo "No change to the preset or reusable workflows since ${last}; skipping the release"
+            exit 0
+          else
+            subject="$(git log -1 --format=%s)"
+            body="$(git log -1 --format=%b)"
+            breaking_re='^[a-z]+(\([^)]*\))?!:'
+            feat_re='^feat(\([^)]*\))?:'
+            IFS=. read -r major minor patch <<< "${last#v}"
+            if [[ "${subject}" =~ ${breaking_re} ]] || grep -q '^BREAKING[ -]CHANGE:' <<< "${body}"; then
+              next="v$((major + 1)).0.0"
+            elif [[ "${subject}" =~ ${feat_re} ]]; then
+              next="v${major}.$((minor + 1)).0"
+            else
+              next="v${major}.${minor}.$((patch + 1))"
+            fi
+          fi
+          echo "version=${next}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create a GitHub App token
+        if: ${{ steps.version.outputs.version != '' }}
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
+      - name: Create the tag and release
+        if: ${{ steps.version.outputs.version != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release create "${VERSION}" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --generate-notes
