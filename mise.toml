@@ -1,0 +1,75 @@
+# exact version で pin し、latest にしない (Renovate が mise.lock と合わせて更新する)。
+[tools]
+prek = "0.5.10"
+jactionlint = "2.6.0"
+dprint = "0.64.3"
+fnox = "v1.48.0"
+gitleaks = "8.30.1"
+typos = "1.52.2"
+zizmor = "1.32.0"
+# jactionlint は PATH の shellcheck で run: を検査するため、ローカルと CI で揃えて pin する
+shellcheck = "0.11.0"
+
+[env]
+# ローカルだけの値は mise.local.toml で上書きする (.gitignore により追跡されない)。
+# 例:
+# MY_VAR = "value"
+# _.file = ".env"
+
+[tasks.pre-commit]
+description = "全ファイルに pre-commit の hook を実行する (CI の prek job のうち online の検査を除く部分)"
+# no-commit-to-branch は検証ではないので、main を checkout したままでも検証できるよう外す。
+# SKIP= の環境変数ではなく option で外すのは、Windows の cmd で動かないため
+run = "prek run --all-files --skip no-commit-to-branch"
+
+[tasks.docs]
+description = "README.md のタスク一覧を mise.toml から生成し直す"
+run = "mise generate task-docs --inject --output README.md"
+
+# README.md / CODEOWNERS / mise.lock はリポジトリごとに書き換えるので比較しない
+[tasks.template-diff]
+description = "共通ファイルを dope-corp/template の main と比べて差分を表示する"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+repo="dope-corp/template"
+files=(
+  .editorconfig .gitattributes .gitignore .pre-commit-config.yaml commitlint.config.mjs
+  dprint.json fnox.toml mise.toml renovate.json typos.toml
+  .github/PULL_REQUEST_TEMPLATE.md .github/jactionlint.yaml
+  .github/ISSUE_TEMPLATE/config.yml .github/ISSUE_TEMPLATE/bug_report.yaml .github/ISSUE_TEMPLATE/feature_request.yaml
+  .github/workflows/ci.yaml .github/workflows/claude.yaml .github/workflows/claude-sweep.yaml
+)
+err="$(mktemp)"
+trap 'rm -f "${err}"' EXIT
+failed=0
+for f in "${files[@]}"; do
+  if ! upstream="$(gh api "repos/${repo}/contents/${f}" -H 'Accept: application/vnd.github.raw+json' 2>"${err}")"; then
+    # 404 は template に無いファイルなので飛ばす。それ以外 (未認証・通信障害・rate limit) は比較できていないので失敗にする
+    if grep -q 'HTTP 404' "${err}"; then
+      echo "!! ${f}: not in ${repo} main (skipped)"
+    else
+      echo "!! ${f}: fetch failed: $(cat "${err}")" >&2
+      failed=1
+    fi
+    continue
+  fi
+  if [[ ! -f "${f}" ]]; then
+    echo "!! ${f}: missing locally"
+    continue
+  fi
+  diff -u --label "template/${f}" --label "${f}" <(printf '%s\n' "${upstream}") "${f}" || true
+done
+exit "${failed}"
+'''
+
+[hooks]
+postinstall = "prek install"
+
+[settings]
+lockfile = true
+
+# 手元でも CI の --locked と同じく mise.lock に無い版を拒否する。[settings] の locked はユーザーのグローバルな
+# tool にも効くので、このリポジトリの tool だけに効く tool_config に置く
+[tool_config]
+locked = true
