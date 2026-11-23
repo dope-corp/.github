@@ -72,10 +72,10 @@ paths=(renovate-preset.json '.github/workflows/reusable-*.yaml')
 # git ls-remote --tags の出力から最新の版を "<tag 名> <commit SHA>" で返す。版の tag が無ければ空を返す
 latest_release() {
   local name
-  name="$(sed -n 's|.*refs/tags/\(v[0-9]*[.][0-9]*[.][0-9]*\)$|\1|p' <<< "$1" | sort -V | tail -n 1)"
+  name="$(sed -n 's|^[0-9a-f]*	refs/tags/\(v[0-9][0-9]*[.][0-9][0-9]*[.][0-9][0-9]*\)$|\1|p' <<< "$1" | sort -V | tail -n 1)"
   [[ -n "${name}" ]] || return 0
   # annotated tag は ^{} の行が commit を指すので、あればそちらを使う
-  echo "${name} $(grep -E "refs/tags/${name}(\^\{\})?$" <<< "$1" | tail -n 1 | cut -f 1)"
+  awk -v ref="refs/tags/${name}" -v name="${name}" '$2 == ref || $2 == ref "^{}" { sha = $1 } END { print name, sha }' <<< "$1"
 }
 
 if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
@@ -97,15 +97,14 @@ if [[ -z "${last}" ]]; then
   fi
   next="v1.0.0"
 else
-  # tag を作った後に Release の作成が失敗していたら、その tag の Release を作り直す
-  if ! gh release view "${last}" --repo "${repo}" > /dev/null 2>&1; then
-    read -r -p "${last} has no GitHub Release. Create it? [y/N] " answer
-    if [[ "${answer}" != "y" ]]; then
-      echo "Aborted" >&2
-      exit 1
+  # tag を作った後に Release の作成が失敗した版は、tag の状態を人が確かめてから Release を作る
+  if ! view="$(gh release view "${last}" --repo "${repo}" 2>&1)"; then
+    if grep -q 'release not found' <<< "${view}"; then
+      echo "${last} (${last_sha}) has no GitHub Release; check the tag and run: gh release create ${last} --repo ${repo} --verify-tag --generate-notes" >&2
+    else
+      echo "${view}" >&2
     fi
-    gh release create "${last}" --repo "${repo}" --verify-tag --generate-notes
-    exit 0
+    exit 1
   fi
   if ! git merge-base --is-ancestor "${last_sha}" "${target}"; then
     echo "${last} (${last_sha}) is not an ancestor of main (${target}); check the tags and run the task again" >&2

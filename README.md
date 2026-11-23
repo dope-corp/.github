@@ -75,7 +75,7 @@ jobs:
 mise run release
 ```
 
-タスクは、手元の clone ではなく dope-corp/.github の main と公開済みの tag から次の版を計算し、前の版からの commit を表示して確認を求めます。確認を待つ間に main や最新の版が変わっていたら、何も作らずに止まります。tag だけがあって GitHub Release が無い版 (前回の Release の作成の失敗) があれば、その Release を作り直します。shallow clone では使えません。版は、前の tag 以降に上の 2 種類のファイルを変えた commit の件名と本文 (squash merge なので PR タイトル) のうち、一番大きい変更で決まります。上の 2 種類のファイルが変わっていなければ tag を作りません。
+タスクは、手元の clone ではなく dope-corp/.github の main と公開済みの tag から次の版を計算し、前の版からの commit を表示して確認を求めます。確認を待つ間に main や最新の版が変わっていたら、何も作らずに止まります。tag だけがあって GitHub Release が無い版 (前回の Release の作成の失敗) があれば、tag を確かめて Release を作るコマンドを表示して止まります。shallow clone では使えません。版は、前の tag 以降に上の 2 種類のファイルを変えた commit の件名と本文 (squash merge なので PR タイトル) のうち、一番大きい変更で決まります。上の 2 種類のファイルが変わっていなければ tag を作りません。
 
 | commit の件名・本文                                 | 版    |
 | --------------------------------------------------- | ----- |
