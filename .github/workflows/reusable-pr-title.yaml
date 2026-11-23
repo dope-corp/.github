@@ -1,0 +1,59 @@
+name: PR title (reusable)
+
+# 呼び出し元の .pre-commit-config.yaml にある commitlint の commit-msg hook (id: commitlint) で PR タイトルを検査する。
+# pull_request の edited・synchronize でも呼ぶ前提 (タイトルの変更と、head の commit ごとに付く required check のため)
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: job の runs-on に渡す値を JSON で書く (例 "ubuntu-latest"、["self-hosted", "Linux", "X64"])
+        type: string
+        default: '"ubuntu-latest"'
+      mise-version:
+        description: mise 本体の版。空なら mise-action が最新版を入れる
+        type: string
+        default: ""
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  pr-title:
+    name: pr-title
+    permissions:
+      contents: read
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 呼び出し元の org の Actions 許可設定で jdx/mise-action@* を許可している必要がある
+      - name: Install mise
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: ${{ inputs.mise-version }}
+          install_args: prek
+
+      # タイトルそのものと、GitHub が squash merge で作る commit title (末尾に " (#<番号>)" が付く) の両方を検査する。
+      # 番号を付けた方だけでは空の件名や末尾のピリオドが検出されず、付けない方だけでは長さの上限を見逃す
+      - name: Lint PR title with commitlint
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # hook は commit message のファイルを読み、# で始まる行をコメントとして捨てるので、検査されずに通ってしまう
+          if [[ "${PR_TITLE}" == "#"* ]]; then
+            echo "PR title must not start with '#': ${PR_TITLE}" >&2
+            exit 1
+          fi
+          printf '%s\n' "${PR_TITLE}" > "${RUNNER_TEMP}/pr-title.txt"
+          printf '%s (#%s)\n' "${PR_TITLE}" "${PR_NUMBER}" > "${RUNNER_TEMP}/squash-title.txt"
+          for f in pr-title.txt squash-title.txt; do
+            mise exec prek -- prek run commitlint --stage commit-msg --commit-msg-filename "${RUNNER_TEMP}/${f}"
+          done
