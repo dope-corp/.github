@@ -45,18 +45,27 @@ jobs:
             echo "No change to the preset or reusable workflows since ${last}; skipping the release"
             exit 0
           else
-            subject="$(git log -1 --format=%s)"
-            body="$(git log -1 --format=%b)"
+            # 前の tag 以降に 2 回以上 merge されることがある (release の失敗・連続した merge) ので、
+            # 利用側のファイルを変えた commit のうち一番大きい変更で版を上げる
             breaking_re='^[a-z]+(\([^)]*\))?!:'
             feat_re='^feat(\([^)]*\))?:'
+            bump="patch"
+            shas="$(git log --format=%H "${last}..HEAD" -- renovate-preset.json '.github/workflows/reusable-*.yaml')"
+            while read -r sha; do
+              subject="$(git log -1 --format=%s "${sha}")"
+              if [[ "${subject}" =~ ${breaking_re} ]] || git log -1 --format=%b "${sha}" | grep -q '^BREAKING[ -]CHANGE:'; then
+                bump="major"
+                break
+              elif [[ "${subject}" =~ ${feat_re} ]]; then
+                bump="minor"
+              fi
+            done <<< "${shas}"
             IFS=. read -r major minor patch <<< "${last#v}"
-            if [[ "${subject}" =~ ${breaking_re} ]] || grep -q '^BREAKING[ -]CHANGE:' <<< "${body}"; then
-              next="v$((major + 1)).0.0"
-            elif [[ "${subject}" =~ ${feat_re} ]]; then
-              next="v${major}.$((minor + 1)).0"
-            else
-              next="v${major}.${minor}.$((patch + 1))"
-            fi
+            case "${bump}" in
+              major) next="v$((major + 1)).0.0" ;;
+              minor) next="v${major}.$((minor + 1)).0" ;;
+              *) next="v${major}.${minor}.$((patch + 1))" ;;
+            esac
           fi
           echo "version=${next}" >> "${GITHUB_OUTPUT}"
 

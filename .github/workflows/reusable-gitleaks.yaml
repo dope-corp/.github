@@ -8,7 +8,7 @@ on:
         type: string
         default: '"ubuntu-latest"'
       mise-version:
-        description: mise 本体の版。空なら mise-action が最新版を入れる
+        description: mise 本体の版。空なら、runner や cache に残った版か、mise-action が選ぶ公開から 24 時間たった最新版を使う
         type: string
         default: ""
 

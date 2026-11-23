@@ -32,12 +32,14 @@ dope-corp のリポジトリが共通で使う設定です。各リポジトリ�
 
 呼び出し側の workflow に trigger・`concurrency`・job の `permissions` を書き、本体を commit SHA で固定して呼びます (版はコメントで併記し、Renovate が更新します)。check の名前は `<呼び出し側の job の name> / <本体の job の name>` になるので、ruleset の required checks と `.github/jactionlint.yaml` の `required-checks` はこの名前で書きます。`.github/jactionlint.yaml` の `forbidden-uses` の `allow` には `dope-corp/.github` を足します。
 
+self-hosted runner はディスクと状態が job の後も残り、ほかのリポジトリの job とも共有します。self-hosted runner を指定するのは、外部の人の PR で workflow が動かないリポジトリ (fork を禁止した private リポジトリ等) だけにします。
+
 共通の入力です。
 
 | 入力           | 内容                                                                                                                                                                                                                                 |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `runs-on`      | job の `runs-on` に渡す値の JSON。既定は `"ubuntu-latest"`。例: `'["self-hosted", "Linux", "X64"]'`。`self-hosted` を含むと mise の cache を使わない (ディスクが残るので要らず、大きなツールがあると save / restore で timeout する) |
-| `mise-version` | mise 本体の版 (claude-sweep を除く)。空なら最新版。self-hosted runner では版がずれないよう指定する                                                                                                                                   |
+| `mise-version` | mise 本体の版 (claude-sweep を除く)。空なら、runner や cache に残った版か、mise-action が選ぶ公開から 24 時間たった最新版を使う。self-hosted runner では版がずれないよう指定する                                                     |
 
 ```yaml
 # .github/workflows/gitleaks.yaml
@@ -63,7 +65,7 @@ jobs:
 
 `reusable-pr-title.yaml` は、`pull_request` の `types: [opened, edited, synchronize, reopened]` で呼びます。呼び出し側の `.pre-commit-config.yaml` にある commitlint の `commit-msg` hook (`id: commitlint`) で検査するので、hook は `language: node` で commitlint を入れる形にします (テンプレートと同じ)。
 
-`reusable-claude-sweep.yaml` は `schedule` と `workflow_dispatch` で呼びます。job の `permissions` に `contents: read`・`actions: read`・`issues: write` を許可し、`secrets` で `CLAUDE_CODE_OAUTH_TOKEN` を渡します。レビューの起点は、呼び出し側の workflow の前回成功した run です。
+`reusable-claude-sweep.yaml` は `schedule` と `workflow_dispatch` で呼びます。job の `permissions` に `contents: read`・`actions: read`・`issues: write` を許可し、`secrets` で `CLAUDE_CODE_OAUTH_TOKEN` を渡します。レビューの起点は、呼び出し側の workflow の前回成功した run です。 self-hosted runner で動かすときは、runner に `gh` が要ります。
 
 ## 変更を公開する
 
@@ -75,9 +77,9 @@ jobs:
 | `feat: ...`                                         | minor |
 | それ以外 (`fix: ...` 等)                            | patch |
 
-入力・secret の削除や改名、必須化のように呼び出し側の変更が要るものは、PR タイトルに `!` を付けて major にします。上の 2 種類以外のファイル (README 等) だけを変えた merge では tag を作りません。issue・PR の雛形と `SECURITY.md` は版を持たず、main の内容がそのまま各リポジトリに効きます。
+このリポジトリは squash merge の commit title を PR タイトルにする設定 (`squash_merge_commit_title: PR_TITLE`) にし、merge の画面で件名を書き換えません。前の tag 以降に利用側のファイルを変えた commit が複数あれば、一番大きい変更で版を上げます。入力・secret の削除や改名、必須化のように呼び出し側の変更が要るものは、PR タイトルに `!` を付けて major にします。上の 2 種類以外のファイル (README 等) だけを変えた merge では tag を作りません。issue・PR の雛形と `SECURITY.md` は版を持たず、main の内容がそのまま各リポジトリに効きます。
 
-各リポジトリでは Renovate が新しい版への更新 PR を作り、minor / patch は CI が通れば自動で merge します (このリポジトリの更新は公開から 7 日待たない)。
+各リポジトリでは Renovate が新しい版への更新 PR を作り、minor / patch は CI が通れば自動で merge します (このリポジトリの更新は公開から 7 日待たない)。ただし、同じ PR にまとめられた更新に pin・digest の更新が 1 つでも入ると、PR 全体が人手の merge になります。
 
 このリポジトリの workflow は本体を `$/` で呼ぶので、PR の CI が変更後の本体で動きます。
 
