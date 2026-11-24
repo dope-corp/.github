@@ -18,7 +18,7 @@ dope-corp のリポジトリが共通で使う設定です。各リポジトリ�
 
 ### Renovate preset
 
-`renovate.json` で preset を tag で固定して参照し、リポジトリ固有の設定だけを足します。Renovate が tag の更新 PR を作ります。
+`.github/renovate.json` (ルートの `renovate.json` でもよい) で preset を tag で固定して参照し、リポジトリ固有の設定だけを足します。Renovate が tag の更新 PR を作ります。
 
 ```json
 {

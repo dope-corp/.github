@@ -6,6 +6,7 @@
 !/.github/**/
 !/.github/CODEOWNERS
 !/.github/jactionlint.yaml
+!/.github/renovate.json
 !/.github/PULL_REQUEST_TEMPLATE.md
 !/.github/ISSUE_TEMPLATE/config.yml
 !/.github/ISSUE_TEMPLATE/bug_report.yaml
@@ -30,7 +31,6 @@
 !/commitlint.config.mjs
 !/dprint.json
 !/typos.toml
-!/renovate.json
 !/renovate-preset.json
 
 # 後に書いた行が優先されるので、許可の行はこの節より上に足す。許可したディレクトリの下でも追跡しない。
