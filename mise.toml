@@ -9,6 +9,8 @@ typos = "1.52.2"
 zizmor = "1.32.0"
 # jactionlint は PATH の shellcheck で run: を検査するため、ローカルと CI で揃えて pin する
 shellcheck = "0.11.0"
+# release タスクが tag と GitHub Release を作るのに使う
+gh = "2.104.0"
 
 [env]
 # ローカルだけの値は mise.local.toml で上書きする (.gitignore により追跡されない)。
@@ -26,41 +28,135 @@ run = "prek run --all-files --skip no-commit-to-branch"
 description = "README.md のタスク一覧を mise.toml から生成し直す"
 run = "mise generate task-docs --inject --output README.md"
 
-# README.md / CODEOWNERS / mise.lock はリポジトリごとに書き換えるので比較しない
 [tasks.template-diff]
 description = "共通ファイルを dope-corp/template の main と比べて差分を表示する"
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
 repo="dope-corp/template"
-files=(
-  .editorconfig .gitattributes .gitignore .pre-commit-config.yaml commitlint.config.mjs
-  dprint.json fnox.toml mise.toml renovate.json typos.toml
-  .github/PULL_REQUEST_TEMPLATE.md .github/jactionlint.yaml
-  .github/ISSUE_TEMPLATE/config.yml .github/ISSUE_TEMPLATE/bug_report.yaml .github/ISSUE_TEMPLATE/feature_request.yaml
-  .github/workflows/ci.yaml .github/workflows/claude.yaml .github/workflows/claude-sweep.yaml
-)
-err="$(mktemp)"
-trap 'rm -f "${err}"' EXIT
+# 比べる対象は template の main にあるファイル。README.md / CODEOWNERS / mise.lock はリポジトリごとに書き換えるので比べない
+# 一覧と内容を同じ版で比べ、パスを URL に埋め込まないよう、内容は blob の SHA で取得する
+entries="$(gh api "repos/${repo}/git/trees/main?recursive=1" \
+  --jq '.tree[] | select(.type == "blob") | select(.path != "README.md" and .path != ".github/CODEOWNERS" and .path != "mise.lock") | "\(.sha)\t\(.path)"')"
+upstream="$(mktemp)"
+trap 'rm -f "${upstream}"' EXIT
 failed=0
-for f in "${files[@]}"; do
-  if ! upstream="$(gh api "repos/${repo}/contents/${f}" -H 'Accept: application/vnd.github.raw+json' 2>"${err}")"; then
-    # 404 は template に無いファイルなので飛ばす。それ以外 (未認証・通信障害・rate limit) は比較できていないので失敗にする
-    if grep -q 'HTTP 404' "${err}"; then
-      echo "!! ${f}: not in ${repo} main (skipped)"
-    else
-      echo "!! ${f}: fetch failed: $(cat "${err}")" >&2
-      failed=1
-    fi
-    continue
-  fi
+while IFS=$'\t' read -r sha f; do
   if [[ ! -f "${f}" ]]; then
     echo "!! ${f}: missing locally"
     continue
   fi
-  diff -u --label "template/${f}" --label "${f}" <(printf '%s\n' "${upstream}") "${f}" || true
-done
+  # 取得できないファイルは比べられていないので、最後に失敗にする
+  if ! gh api "repos/${repo}/git/blobs/${sha}" -H 'Accept: application/vnd.github.raw+json' > "${upstream}"; then
+    echo "!! ${f}: fetch failed" >&2
+    failed=1
+    continue
+  fi
+  diff -u --label "template/${f}" --label "${f}" "${upstream}" "${f}" || true
+done <<< "${entries}"
 exit "${failed}"
+'''
+
+# GITHUB_TOKEN は workflows 権限を持てず、workflow ファイルを変えた commit への tag の作成を拒否されることがあるので、
+# CI ではなく手元の gh の認証で作る
+[tasks.release]
+description = "preset と reusable workflow の変更を merge した後に、main に次の版の tag と GitHub Release を作る"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+repo="dope-corp/.github"
+url="https://github.com/${repo}.git"
+# 利用側が版を固定して参照するファイル
+paths=(renovate-preset.json '.github/workflows/reusable-*.yaml')
+
+# git ls-remote --tags の出力から最新の版を "<tag 名> <commit SHA>" で返す。版の tag が無ければ空を返す
+latest_release() {
+  local name
+  # 先頭が 0 の数 (v1.08.0 等) は版とみなさない
+  name="$(sed -En 's/^[0-9a-f]+	refs\/tags\/(v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$/\1/p' <<< "$1" | sort -V | tail -n 1)"
+  [[ -n "${name}" ]] || return 0
+  # annotated tag は ^{} の行が commit を指すので、あればそちらを使う
+  awk -v ref="refs/tags/${name}" -v name="${name}" '$2 == ref || $2 == ref "^{}" { sha = $1 } END { print name, sha }' <<< "$1"
+}
+
+if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+  echo "This clone is shallow; run 'git fetch --unshallow' first so that the previous release is reachable" >&2
+  exit 1
+fi
+# 版の計算に使う main と最新の版は、手元の clone (origin・取得済みの tag) ではなく公開先から取り、以降は同じ SHA を使う
+target="$(git ls-remote --exit-code "${url}" refs/heads/main | cut -f 1)"
+tags="$(git ls-remote --tags "${url}" 'v*')"
+release="$(latest_release "${tags}")"
+last="${release%% *}"
+last_sha="${release##* }"
+git fetch --quiet "${url}" "${target}" ${last_sha:+"${last_sha}"}
+
+if [[ -z "${last}" ]]; then
+  if ! git cat-file -e "${target}:renovate-preset.json" 2>/dev/null; then
+    echo "renovate-preset.json is not on main yet; nothing to release" >&2
+    exit 1
+  fi
+  next="v1.0.0"
+else
+  if ! git merge-base --is-ancestor "${last_sha}" "${target}"; then
+    echo "${last} (${last_sha}) is not an ancestor of main (${target}); check the tags and run the task again" >&2
+    exit 1
+  fi
+  # tag を作った後に Release の作成が失敗した版は、tag の状態を人が確かめてから Release を作る。
+  # gh release view は取得の失敗でも release not found を返しうるので、HTTP の状態を返す API で 404 だけを不在とみなす
+  if ! view="$(gh api "repos/${repo}/releases/tags/${last}" --silent 2>&1)"; then
+    if grep -q 'HTTP 404' <<< "${view}"; then
+      echo "${last} (${last_sha}) has no GitHub Release; check the tag and run: gh release create ${last} --repo ${repo} --verify-tag --generate-notes" >&2
+    else
+      echo "${view}" >&2
+    fi
+    exit 1
+  fi
+  if git diff --quiet "${last_sha}" "${target}" -- "${paths[@]}"; then
+    # 利用側に届くファイルが変わらない版で、全リポジトリに Renovate の更新 PR を作らない
+    echo "No change to the preset or reusable workflows since ${last}; nothing to release"
+    exit 0
+  fi
+  # 前の版以降の commit のうち、利用側のファイルを変えたものの一番大きい変更で版を上げる
+  breaking_re='^[a-z]+(\([^)]*\))?!:'
+  feat_re='^feat(\([^)]*\))?:'
+  bump="patch"
+  shas="$(git log --format=%H "${last_sha}..${target}" -- "${paths[@]}")"
+  while read -r sha; do
+    subject="$(git log -1 --format=%s "${sha}")"
+    body="$(git log -1 --format=%b "${sha}")"
+    if [[ "${subject}" =~ ${breaking_re} ]] || grep -q '^BREAKING[ -]CHANGE:' <<< "${body}"; then
+      bump="major"
+      break
+    elif [[ "${subject}" =~ ${feat_re} ]]; then
+      bump="minor"
+    fi
+  done <<< "${shas}"
+  IFS=. read -r major minor patch <<< "${last#v}"
+  case "${bump}" in
+    major) next="v$((major + 1)).0.0" ;;
+    minor) next="v${major}.$((minor + 1)).0" ;;
+    *) next="v${major}.${minor}.$((patch + 1))" ;;
+  esac
+fi
+
+echo "${last:-"(no release yet)"} -> ${next}"
+git log --oneline "${last:+${last_sha}..}${target}" -- "${paths[@]}"
+read -r -p "Create ${next} at ${target}? [y/N] " answer
+if [[ "${answer}" != "y" ]]; then
+  echo "Aborted" >&2
+  exit 1
+fi
+# 確認を待つ間に main が進んだり別の人が版を作ったりしていたら、計算し直してもらう
+target_now="$(git ls-remote --exit-code "${url}" refs/heads/main | cut -f 1)"
+tags_now="$(git ls-remote --tags "${url}" 'v*')"
+if [[ "${target_now}" != "${target}" || "$(latest_release "${tags_now}")" != "${release}" ]]; then
+  echo "main or the latest release changed while waiting; run the task again" >&2
+  exit 1
+fi
+# 同じ名前の tag が既にあれば失敗させ、確認した commit 以外に Release を作らない
+gh api --silent "repos/${repo}/git/refs" -f "ref=refs/tags/${next}" -f "sha=${target}"
+gh release create "${next}" --repo "${repo}" --verify-tag --generate-notes
 '''
 
 [hooks]

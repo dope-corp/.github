@@ -23,7 +23,9 @@ config-secrets:
 required-checks:
   - name: prek
     branches: [main]
-  - name: gitleaks
+  - name: gitleaks / gitleaks
+    branches: [main]
+  - name: pr-title / pr-title
     branches: [main]
 
 # 外部の runner サービスは使わないので、そのラベルも受け付けない
