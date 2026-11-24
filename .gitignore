@@ -20,6 +20,10 @@
 !/.github/workflows/reusable-pr-title.yaml
 !/.github/SECURITY.md
 
+!/.config/
+!/.config/commitlint.config.mjs
+!/.config/dprint.json
+
 !/.gitignore
 !/.gitattributes
 !/.editorconfig
@@ -28,8 +32,6 @@
 !/mise.lock
 !/fnox.toml
 !/.pre-commit-config.yaml
-!/commitlint.config.mjs
-!/dprint.json
 !/typos.toml
 !/renovate-preset.json
 
