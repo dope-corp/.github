@@ -88,9 +88,10 @@ jobs:
           fi
           # default branch の履歴が書き換えられると、base が head の祖先でなくなる (checkout にも無いことがある)。
           # 書き換えの前と共通の commit からレビューし直す。base は checkout に無くても GitHub に残っていることがあるので、
-          # 共通祖先は compare API で求める。範囲を決められないときは warning を出して bootstrap し直す。
-          # job を失敗させる (次回に同じ base でやり直す) のは、再試行で直りうる 5xx と rate limit (429) だけにする。
-          # ほかで失敗させると、同じ base で毎回失敗し続ける
+          # 共通祖先は compare API で求める。bootstrap し直す (範囲を捨てる) のは、再試行しても変わらない失敗
+          # (commit が GitHub にも無い 404、比較できない 422、共通祖先が無い) だけにする。一時的な失敗
+          # (5xx・rate limit の 403 や 429・ネットワークエラー) で範囲を捨てると、レビュー漏れに気づけないので、
+          # それ以外は job を失敗させて次回に同じ base でやり直す
           if ! git merge-base --is-ancestor "${base}" "${head}" 2>/dev/null; then
             err="$(mktemp)"
             if merge_base="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${base}...${head}" --jq '.merge_base_commit.sha // empty' 2> "${err}")"; then
@@ -100,13 +101,13 @@ jobs:
               fi
               echo "::warning::前回レビューした commit ${base} が ${head} の祖先でないため、共通祖先 ${merge_base} からレビューする"
               base="${merge_base}"
-            elif grep -qE '\(HTTP (5[0-9]{2}|429)\)' "${err}"; then
-              cat "${err}" >&2
-              exit 1
-            else
+            elif grep -qE 'HTTP (404|422)([^0-9]|$)' "${err}"; then
               cat "${err}" >&2
               echo "::warning::前回レビューした commit ${base} と ${head} を比較できないため、bootstrap し直す (${base}..${head} はレビューしない)"
               exit 0
+            else
+              cat "${err}" >&2
+              exit 1
             fi
           fi
           # git diff --quiet は差分ありで 1、エラーで 128 を返すので、1 のときだけレビューする
