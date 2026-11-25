@@ -164,7 +164,8 @@ jobs:
                同一の問題 (同じ箇所・同じ趣旨) は指摘に含めない。close 済みのものも含めない。
             4. 新規の指摘を 1 指摘 = 1 件として findings に入れる。issue は workflow が findings から起票するので、
                自分では起票しない。指摘が無ければ findings を空にする。各 body には次を含める:
-               - 対象箇所 (file:line と、`<リポジトリ>/blob/<head>/<path>#L<line>` の permalink)
+               - 対象箇所 (file:line と permalink。permalink は `<リポジトリ>/blob/<head>/<path>#L<line>` で、
+                 削除されたファイルや行を指すときは `<base>` と変更前のパス・行番号を使う)
                - 問題の説明と、そう判断した根拠
                - 推奨する修正方針
                - severity (high/medium/low) と confidence (high/medium/low)
@@ -174,12 +175,37 @@ jobs:
                対象範囲を添えて 1 件入れる。
             6. コードは変更しない。
 
+  collect:
+    name: collect
+    needs: review
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      exists: ${{ steps.collect.outputs.exists }}
+    steps:
+      # review の structured output が無いとき (GitHub は secret を含むと判定した job output を渡さない) に、
+      # 指摘を落としたまま run を成功させない。成功した run だけが次回の起点になるので、同じ範囲を次回に再レビューする。
+      # job の if で fromJSON の評価が失敗しても run が失敗になるとは限らないため、step で確かめる
+      - name: Check findings
+        id: collect
+        env:
+          FINDINGS: ${{ needs.review.outputs.findings }}
+        run: |
+          if [[ -z "${FINDINGS}" ]]; then
+            echo "::error::review job did not return structured output"
+            exit 1
+          fi
+          if [[ "${FINDINGS}" =~ ^\{[[:space:]]*\"findings\"[[:space:]]*:[[:space:]]*\[[[:space:]]*\][[:space:]]*\}$ ]]; then
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+          fi
+
   file:
     name: file
-    needs: review
-    # structured output が無いと fromJSON が失敗し、run も失敗する。成功した run だけが次回の起点になるので、
-    # 同じ範囲を次回に再レビューする
-    if: ${{ fromJSON(needs.review.outputs.findings).findings[0] != null }}
+    needs: [review, collect]
+    if: ${{ needs.collect.outputs.exists == 'true' }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 5
     permissions:
@@ -188,9 +214,10 @@ jobs:
     env:
       MISE_ENABLE_TOOLS: gh
     # 指摘を shell で JSON として分けない (self-hosted runner に jq が無いことがある)。label の作成が重ならないよう
-    # 1 件ずつ起票する
+    # 1 件ずつ起票し、1 件の失敗で残りを取り消さない (失敗した run は次回に同じ範囲を再レビューする)
     strategy:
       max-parallel: 1
+      fail-fast: false
       matrix:
         finding: ${{ fromJSON(needs.review.outputs.findings).findings }}
     steps:
