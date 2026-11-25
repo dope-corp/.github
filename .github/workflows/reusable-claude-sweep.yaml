@@ -84,13 +84,31 @@ jobs:
           if [[ -z "${base}" ]]; then
             # 初回は全体のレビューが大きすぎるため、成功で終えて起点を作るだけにする
             echo "成功した run が無いため bootstrap する (レビューは次回から)"
-          elif git diff --quiet "${base}..${head}"; then
-            # 差分が無ければ Claude を起動しない (費用を抑えるため)
-            echo "前回レビュー以降の差分が無いためスキップする"
-          else
-            echo "mode=review" >> "${GITHUB_OUTPUT}"
-            echo "base=${base}" >> "${GITHUB_OUTPUT}"
+            exit 0
           fi
+          # run の headSha は tag と違い commit を GC から守らない。default branch の履歴が書き換えられると、
+          # base が checkout に無いか head の祖先でなくなり、前回の範囲を引き継げない。無効な範囲で review を
+          # 成功させると起点だけが進むので、warning を出して bootstrap し直す
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "${base}" "${head}"; then
+            echo "::warning::前回レビューした commit ${base} が ${head} の祖先として見つからないため、bootstrap し直す (${base}..${head} はレビューしない)"
+            exit 0
+          fi
+          # git diff --quiet は差分ありで 1、エラーで 128 を返すので、1 のときだけレビューする
+          status=0
+          git diff --quiet "${base}..${head}" || status=$?
+          case "${status}" in
+            0)
+              # 差分が無ければ Claude を起動しない (費用を抑えるため)
+              echo "前回レビュー以降の差分が無いためスキップする"
+              ;;
+            1)
+              echo "mode=review" >> "${GITHUB_OUTPUT}"
+              echo "base=${base}" >> "${GITHUB_OUTPUT}"
+              ;;
+            *)
+              exit "${status}"
+              ;;
+          esac
 
   review:
     name: review
@@ -146,7 +164,7 @@ jobs:
             --model opus
             --permission-mode default
             --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh search issues:*)"
-            --json-schema '{"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["title","body"],"properties":{"title":{"type":"string","minLength":1,"description":"issue のタイトル"},"body":{"type":"string","minLength":1,"description":"issue の本文 (Markdown)"}}}}}}'
+            --json-schema '{"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","maxItems":50,"items":{"type":"object","additionalProperties":false,"required":["title","body"],"properties":{"title":{"type":"string","minLength":1,"description":"issue のタイトル"},"body":{"type":"string","minLength":1,"description":"issue の本文 (Markdown)"}}}}}}'
           prompt: |
             このリポジトリの定期レビュー sweep を実行してください。
 
@@ -169,7 +187,8 @@ jobs:
             3. `gh issue list --label claude-sweep --state all --limit 1000` で過去の指摘を全件確認し、
                同一の問題 (同じ箇所・同じ趣旨) は指摘に含めない。close 済みのものも含めない。
             4. 新規の指摘を 1 指摘 = 1 件として findings に入れる。issue は workflow が findings から起票するので、
-               自分では起票しない。指摘が無ければ findings を空にする。各 body には次を含める:
+               自分では起票しない。指摘が無ければ findings を空にする。findings は 50 件までで、超えるときは
+               severity の高い順に 50 件を選ぶ。各 body には次を含める:
                - 対象箇所 (file:line と permalink。permalink は `<リポジトリ>/blob/<head>/<path>#L<line>` で、
                  削除されたファイルや行を指すときは `<base>` と変更前のパス・行番号を使う)
                - 問題の説明と、そう判断した根拠
@@ -219,6 +238,7 @@ jobs:
       issues: write # 指摘を issue に起票するため
     env:
       MISE_ENABLE_TOOLS: gh
+    # matrix は 256 job までなので、review の --json-schema で指摘を 50 件までに制限している。
     # 指摘を shell で JSON として分けない (self-hosted runner に jq が無いことがある)。label の作成が重ならないよう
     # 1 件ずつ起票し、1 件の失敗で残りを取り消さない (失敗した run は次回に同じ範囲を再レビューする)
     strategy:
