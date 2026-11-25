@@ -86,12 +86,21 @@ jobs:
             echo "成功した run が無いため bootstrap する (レビューは次回から)"
             exit 0
           fi
-          # run の headSha は tag と違い commit を GC から守らない。default branch の履歴が書き換えられると、
-          # base が checkout に無いか head の祖先でなくなり、前回の範囲を引き継げない。無効な範囲で review を
-          # 成功させると起点だけが進むので、warning を出して bootstrap し直す
-          if ! git cat-file -e "${base}^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "${base}" "${head}"; then
-            echo "::warning::前回レビューした commit ${base} が ${head} の祖先として見つからないため、bootstrap し直す (${base}..${head} はレビューしない)"
-            exit 0
+          # default branch の履歴が書き換えられると、base が head の祖先でなくなる (checkout にも無いことがある)。
+          # 書き換えの前と共通の commit からレビューし直す。base は checkout に無くても GitHub に残っていることがあるので、
+          # 共通祖先は compare API で求める。GitHub にも無ければ範囲を決められないので、warning を出して bootstrap し直す
+          if ! git merge-base --is-ancestor "${base}" "${head}" 2>/dev/null; then
+            err="$(mktemp)"
+            if merge_base="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${base}...${head}" --jq '.merge_base_commit.sha' 2> "${err}")"; then
+              echo "::warning::前回レビューした commit ${base} が ${head} の祖先でないため、共通祖先 ${merge_base} からレビューする"
+              base="${merge_base}"
+            elif grep -q 'HTTP 404' "${err}"; then
+              echo "::warning::前回レビューした commit ${base} が見つからないため、bootstrap し直す (${base}..${head} はレビューしない)"
+              exit 0
+            else
+              cat "${err}" >&2
+              exit 1
+            fi
           fi
           # git diff --quiet は差分ありで 1、エラーで 128 を返すので、1 のときだけレビューする
           status=0
