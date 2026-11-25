@@ -1,14 +1,19 @@
 name: Claude Sweep (reusable)
 
 # 呼び出し元の job は contents: read・actions: read・issues: write を許可する。
+# 呼び出し元の mise.toml で gh の版を固定する (mise.lock も要る)。
 # 呼び出し元の workflow を週次の schedule で起動し、同じ workflow の前回成功した run の commit から HEAD までをレビューする
 on:
   workflow_call:
     inputs:
       runs-on:
-        description: job の runs-on に渡す値を JSON で書く (例 "ubuntu-latest"、["self-hosted", "Linux", "X64"])。self-hosted runner には gh が要る
+        description: job の runs-on に渡す値を JSON で書く (例 "ubuntu-latest"、["self-hosted", "Linux", "X64"])
         type: string
         default: '"ubuntu-latest"'
+      mise-version:
+        description: mise 本体の版。空なら、runner に残った版か、mise-action が選ぶ公開から 24 時間たった最新版を使う
+        type: string
+        default: ""
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         description: claude setup-token で発行した token
@@ -32,6 +37,9 @@ jobs:
     permissions:
       contents: read # checkout するため
       actions: read # 前回成功した run を gh run list で引くため
+    env:
+      # mise の shim が mise.toml の他のツールを解決・インストールしないよう、gh に限る
+      MISE_ENABLE_TOOLS: gh
     outputs:
       mode: ${{ steps.plan.outputs.mode }}
       base: ${{ steps.plan.outputs.base }}
@@ -43,6 +51,16 @@ jobs:
           # 差分計算に全履歴が要る
           fetch-depth: 0
           persist-credentials: false
+
+      # runner の gh ではなく、呼び出し元の mise.toml で固定した gh を使う (self-hosted runner には gh が無いことがある)。
+      # 呼び出し元の org の Actions 許可設定で jdx/mise-action@* を許可している必要がある
+      - name: Install gh
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: ${{ inputs.mise-version }}
+          # cache は mise の全ツールを save / restore するので、gh だけを入れる job では使わない
+          cache: false
+          install_args: gh
 
       - name: Determine review range
         id: plan
@@ -82,12 +100,25 @@ jobs:
     permissions:
       contents: read # checkout と差分の取得のため
       issues: write # 指摘を issue に起票するため
+    env:
+      # mise の shim が mise.toml の他のツールを解決・インストールしないよう、gh に限る
+      MISE_ENABLE_TOOLS: gh
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # runner の gh ではなく、呼び出し元の mise.toml で固定した gh を使う (self-hosted runner には gh が無いことがある)。
+      # 呼び出し元の org の Actions 許可設定で jdx/mise-action@* を許可している必要がある
+      - name: Install gh
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: ${{ inputs.mise-version }}
+          # cache は mise の全ツールを save / restore するので、gh だけを入れる job では使わない
+          cache: false
+          install_args: gh
 
       - name: Run Claude Code sweep
         uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
