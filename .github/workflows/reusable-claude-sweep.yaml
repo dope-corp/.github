@@ -27,8 +27,9 @@ defaults:
 
 # レビューの起点を tag で持たないのは、GITHUB_TOKEN が workflow ファイルの変更を含む commit へ ref を動かせず、
 # push が拒否されることがあるため。
-# review job には issues: write の token と Claude の OAuth credential が残るため、prompt injection による
-# issue 操作・credential の露出は --allowedTools で Bash を絞って緩和するだけにとどまる。
+# review job には Claude の OAuth credential と issues: read の token が残るため、prompt injection による
+# credential の露出は --allowedTools で Bash を絞って緩和するだけにとどまる。issue を書ける token は、
+# Claude を動かさない file job だけが持つ。
 jobs:
   plan:
     name: plan
@@ -99,10 +100,12 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read # checkout と差分の取得のため
-      issues: write # 指摘を issue に起票するため
+      issues: read # 過去の指摘と重複しないよう、既存の issue を読むため
     env:
       # mise の shim が mise.toml の他のツールを解決・インストールしないよう、gh に限る
       MISE_ENABLE_TOOLS: gh
+    outputs:
+      findings: ${{ steps.sweep.outputs.structured_output }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,6 +124,7 @@ jobs:
           install_args: gh
 
       - name: Run Claude Code sweep
+        id: sweep
         uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
         env:
           # Claude が Bash から gh CLI を使うため
@@ -133,36 +137,83 @@ jobs:
           # 縛られない。github.token を渡して job の権限に閉じる
           github_token: ${{ github.token }}
           # default は --allowedTools に無い操作を拒否する (承認する人がいないため)。既定の auto mode では、
-          # 安全性の判定を通れば列挙していない操作も実行される
+          # 安全性の判定を通れば列挙していない操作も実行される。
+          # 指摘は --json-schema の structured output で返させ、起票は file job が行う。Claude Code は
+          # 改行の後に # が続く引数 (Markdown の見出しを含む本文) を拒否するので、Claude には起票させられない。
+          # model を指定するのは、既定の model では数 turn で終わり、数十 commit の範囲を読み切らないため
           claude_args: |
+            --model opus
             --permission-mode default
-            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh search issues:*),Bash(gh issue create:*),Bash(gh label list:*),Bash(gh label create:*)"
+            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh search issues:*)"
+            --json-schema '{"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["title","body"],"properties":{"title":{"type":"string","description":"issue のタイトル"},"body":{"type":"string","description":"issue の本文 (Markdown)"}}}}}}'
           prompt: |
             このリポジトリの定期レビュー sweep を実行してください。
 
+            リポジトリ: ${{ github.server_url }}/${{ github.repository }}
             対象範囲: ${{ needs.plan.outputs.base }}..${{ needs.plan.outputs.head }}
             リポジトリの公開範囲: ${{ github.event.repository.private && 'private' || 'public' }}
 
             手順:
-            1. `git log --oneline <base>..<head>` と `git diff <base>..<head>` で変更内容を把握する。
-            2. 差分とその周辺コードを以下の観点でレビューする:
+            1. `git log --oneline <base>..<head>` と `git diff --stat <base>..<head>` で、変更された commit とファイルを把握する。
+            2. 変更されたファイルをすべてレビューする。lock file と生成物を除く各ファイルの差分を
+               `git diff <base>..<head> -- <path>` で読み、要るなら周辺のコードも読む。観点は次のとおり:
                - correctness: バグ、エッジケースの見落とし、エラーハンドリングの欠落、レグレッション
                - security: 入力検証、認証・認可、secret の扱い、危険なコマンド実行
                - simplification: コードの重複、既存ユーティリティの再利用漏れ、不要な複雑さ、非効率な実装
-            3. 起票前に重複排除する: `gh issue list --label claude-sweep --state all --limit 1000` で
-               過去の指摘を全件確認し、同一の問題 (同じ箇所・同じ趣旨) は起票しない。close 済みで
-               wontfix 判断されたものも再起票しない。
-            4. label が無ければ `gh label create claude-sweep --description "Claude weekly sweep findings" --color 5319E7` で作成する。
-            5. 新規の指摘のみ、1 指摘 = 1 issue で起票する。各 issue には以下を含める:
-               - 対象箇所 (file:line。コミット SHA 付きの permalink)
+            3. `gh issue list --label claude-sweep --state all --limit 1000` で過去の指摘を全件確認し、
+               同一の問題 (同じ箇所・同じ趣旨) は指摘に含めない。close 済みのものも含めない。
+            4. 新規の指摘を 1 指摘 = 1 件として findings に入れる。issue は workflow が findings から起票するので、
+               自分では起票しない。指摘が無ければ findings を空にする。各 body には次を含める:
+               - 対象箇所 (file:line と、`<リポジトリ>/blob/<head>/<path>#L<line>` の permalink)
                - 問題の説明と、そう判断した根拠
                - 推奨する修正方針
                - severity (high/medium/low) と confidence (high/medium/low)
-               - label: claude-sweep
-            6. 公開範囲が public のときは、悪用できる脆弱性 (security の観点の指摘のうち、攻撃に使えるもの) の
-               対象箇所・内容・根拠・修正方針を issue にも最終出力にも書かない。issue と Actions のログは誰でも
-               見られるため。代わりに「非公開で確認が必要なセキュリティ上の指摘がある」とだけ、対象範囲を添えて
-               1 件起票する。
-            7. 修正 PR は作らない。コードも変更しない。issue 起票がこのタスクの終点。
+            5. 公開範囲が public のときは、悪用できる脆弱性 (security の観点の指摘のうち、攻撃に使えるもの) の
+               対象箇所・内容・根拠・修正方針を、findings にもほかの出力にも書かない。issue と Actions のログは
+               誰でも見られるため。代わりに「非公開で確認が必要なセキュリティ上の指摘がある」とだけ、
+               対象範囲を添えて 1 件入れる。
+            6. コードは変更しない。
 
-            最後に、起票した issue の一覧と、重複としてスキップした指摘の要約を出力してください。
+  file:
+    name: file
+    needs: review
+    # structured output が無いと fromJSON が失敗し、run も失敗する。成功した run だけが次回の起点になるので、
+    # 同じ範囲を次回に再レビューする
+    if: ${{ fromJSON(needs.review.outputs.findings).findings[0] != null }}
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 5
+    permissions:
+      contents: read # mise.toml を読むため
+      issues: write # 指摘を issue に起票するため
+    env:
+      MISE_ENABLE_TOOLS: gh
+    # 指摘を shell で JSON として分けない (self-hosted runner に jq が無いことがある)。label の作成が重ならないよう
+    # 1 件ずつ起票する
+    strategy:
+      max-parallel: 1
+      matrix:
+        finding: ${{ fromJSON(needs.review.outputs.findings).findings }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install gh
+        uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: ${{ inputs.mise-version }}
+          cache: false
+          install_args: gh
+
+      - name: File the finding as an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ matrix.finding.title }}
+          BODY: ${{ matrix.finding.body }}
+        run: |
+          labels="$(gh label list --repo "${GITHUB_REPOSITORY}" --limit 1000 --json name --jq '.[].name')"
+          if ! grep -qx claude-sweep <<< "${labels}"; then
+            gh label create claude-sweep --repo "${GITHUB_REPOSITORY}" --description "Claude weekly sweep findings" --color 5319E7
+          fi
+          printf '%s\n' "${BODY}" | gh issue create --repo "${GITHUB_REPOSITORY}" --label claude-sweep --title "${TITLE}" --body-file -

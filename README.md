@@ -75,7 +75,7 @@ check の名前は `<呼び出し側の job の name> / <本体の job の name>
 
 `reusable-pr-title.yaml` は、呼び出し側の `.pre-commit-config.yaml` にある commitlint の `commit-msg` hook (`id: commitlint`) で、PR タイトルと、squash merge で付く ` (#<番号>)` を足したタイトルを検査します。hook は dope-corp/template と同じく `language: node` で commitlint を入れる形にします。
 
-`reusable-claude-sweep.yaml` は、`secrets` で `CLAUDE_CODE_OAUTH_TOKEN` を受け取ります。レビューの起点は呼び出し側の workflow の前回成功した run なので、ほかの job を持たない専用の workflow から呼びます。default branch 以外の手動実行ではレビューしません。Claude が使えるのは差分と issue の読み書きに要るコマンドだけで、public リポジトリでは、悪用できる脆弱性の中身を issue に書かず、非公開での確認が要ることだけを起票します。gh は runner のものではなく、呼び出し側の `mise.toml` で固定した版を使います。
+`reusable-claude-sweep.yaml` は、`secrets` で `CLAUDE_CODE_OAUTH_TOKEN` を受け取ります。レビューの起点は呼び出し側の workflow の前回成功した run なので、ほかの job を持たない専用の workflow から呼びます。default branch 以外の手動実行ではレビューしません。Claude (model は Opus) は差分と既存の issue を読むコマンドだけを使えて、指摘を JSON で返します。issue は Claude を動かさない後続の job が起票するので、issue を書ける token は Claude に渡りません。public リポジトリでは、悪用できる脆弱性の中身を issue に書かず、非公開での確認が要ることだけを起票します。gh は runner のものではなく、呼び出し側の `mise.toml` で固定した版を使います。
 
 ## 変更を公開する
 
