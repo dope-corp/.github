@@ -145,7 +145,7 @@ jobs:
             --model opus
             --permission-mode default
             --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh search issues:*)"
-            --json-schema '{"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["title","body"],"properties":{"title":{"type":"string","description":"issue のタイトル"},"body":{"type":"string","description":"issue の本文 (Markdown)"}}}}}}'
+            --json-schema '{"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["title","body"],"properties":{"title":{"type":"string","minLength":1,"description":"issue のタイトル"},"body":{"type":"string","minLength":1,"description":"issue の本文 (Markdown)"}}}}}}'
           prompt: |
             このリポジトリの定期レビュー sweep を実行してください。
 
@@ -154,7 +154,7 @@ jobs:
             リポジトリの公開範囲: ${{ github.event.repository.private && 'private' || 'public' }}
 
             手順:
-            1. `git log --oneline <base>..<head>` と `git diff --stat <base>..<head>` で、変更された commit とファイルを把握する。
+            1. `git log --oneline <base>..<head>` と `git diff --name-status <base>..<head>` で、変更された commit とファイルを把握する。
             2. 変更されたファイルをすべてレビューする。lock file と生成物を除く各ファイルの差分を
                `git diff <base>..<head> -- <path>` で読み、要るなら周辺のコードも読む。観点は次のとおり:
                - correctness: バグ、エッジケースの見落とし、エラーハンドリングの欠落、レグレッション
@@ -242,5 +242,11 @@ jobs:
           labels="$(gh label list --repo "${GITHUB_REPOSITORY}" --limit 1000 --json name --jq '.[].name')"
           if ! grep -qx claude-sweep <<< "${labels}"; then
             gh label create claude-sweep --repo "${GITHUB_REPOSITORY}" --description "Claude weekly sweep findings" --color 5319E7
+          fi
+          # 起票した後に job が失敗して再実行されても、同じ指摘を重ねて起票しない
+          titles="$(gh issue list --repo "${GITHUB_REPOSITORY}" --label claude-sweep --state all --limit 1000 --json title --jq '.[].title')"
+          if grep -Fqx -- "${TITLE}" <<< "${titles}"; then
+            echo "同じタイトルの issue があるため起票しない"
+            exit 0
           fi
           printf '%s\n' "${BODY}" | gh issue create --repo "${GITHUB_REPOSITORY}" --label claude-sweep --title "${TITLE}" --body-file -
