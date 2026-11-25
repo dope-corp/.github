@@ -58,16 +58,16 @@ jobs:
 | ---------------------------- | ------------------------------------------------------------------ | -------------------------------------------------- | ---------------------------------------------------- |
 | `reusable-gitleaks.yaml`     | `pull_request` (必要なら `schedule`)                               | `contents: read`                                   | `gitleaks`                                           |
 | `reusable-pr-title.yaml`     | `pull_request` の `types: [opened, edited, synchronize, reopened]` | `contents: read`                                   | `prek`                                               |
-| `reusable-claude-sweep.yaml` | `schedule` と `workflow_dispatch`                                  | `contents: read`・`actions: read`・`issues: write` | -                                                    |
+| `reusable-claude-sweep.yaml` | `schedule` と `workflow_dispatch`                                  | `contents: read`・`actions: read`・`issues: write` | `gh`                                                 |
 
 本体は呼び出し側の `mise.toml` と `mise.lock` でツールを入れるので、上の列のツールを `[tools]` に固定して `mise.lock` に含めます (dope-corp/template から作ったリポジトリでは固定済み)。
 
 共通の入力です。
 
-| 入力           | 内容                                                                                                                                                                                                                                          |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runs-on`      | job の `runs-on` に渡す値の JSON。既定は `"ubuntu-latest"`。例: `'["self-hosted", "Linux", "X64"]'`。`self-hosted` の label を含むと mise の cache を使わない (ディスクが残るので要らず、大きなツールがあると save / restore で timeout する) |
-| `mise-version` | mise 本体の版 (claude-sweep を除く)。空なら、runner や cache に残った版か、mise-action が選ぶ公開から 24 時間たった最新版を使う。self-hosted runner では版がずれないよう指定する                                                              |
+| 入力           | 内容                                                                                                                                                                                                                                                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `runs-on`      | job の `runs-on` に渡す値の JSON。既定は `"ubuntu-latest"`。例: `'["self-hosted", "Linux", "X64"]'`。`self-hosted` の label を含むと mise の cache を使わない (ディスクが残るので要らず、大きなツールがあると save / restore で timeout する)。claude-sweep は gh だけを入れるので、常に使わない |
+| `mise-version` | mise 本体の版。空なら、runner や cache に残った版か、mise-action が選ぶ公開から 24 時間たった最新版を使う。self-hosted runner では版がずれないよう指定する                                                                                                                                       |
 
 self-hosted runner はディスクと状態が job の後も残るので、PR のコード (`mise.toml` や hook) を動かした跡が、同じ runner の後の job に影響しえます。self-hosted runner は、外部の人の PR で workflow が動かず、その runner を使うリポジトリのすべてに同じ人たちが書き込めるときだけ使います。それ以外は GitHub-hosted runner を使います。
 
@@ -75,7 +75,7 @@ check の名前は `<呼び出し側の job の name> / <本体の job の name>
 
 `reusable-pr-title.yaml` は、呼び出し側の `.pre-commit-config.yaml` にある commitlint の `commit-msg` hook (`id: commitlint`) で、PR タイトルと、squash merge で付く ` (#<番号>)` を足したタイトルを検査します。hook は dope-corp/template と同じく `language: node` で commitlint を入れる形にします。
 
-`reusable-claude-sweep.yaml` は、`secrets` で `CLAUDE_CODE_OAUTH_TOKEN` を受け取ります。レビューの起点は呼び出し側の workflow の前回成功した run なので、ほかの job を持たない専用の workflow から呼びます。default branch 以外の手動実行ではレビューしません。Claude が使えるのは差分と issue の読み書きに要るコマンドだけで、public リポジトリでは、悪用できる脆弱性の中身を issue に書かず、非公開での確認が要ることだけを起票します。self-hosted runner で動かすときは、runner に `gh` が要ります。
+`reusable-claude-sweep.yaml` は、`secrets` で `CLAUDE_CODE_OAUTH_TOKEN` を受け取ります。レビューの起点は呼び出し側の workflow の前回成功した run なので、ほかの job を持たない専用の workflow から呼びます。default branch 以外の手動実行ではレビューしません。Claude が使えるのは差分と issue の読み書きに要るコマンドだけで、public リポジトリでは、悪用できる脆弱性の中身を issue に書かず、非公開での確認が要ることだけを起票します。gh は runner のものではなく、呼び出し側の `mise.toml` で固定した版を使います。
 
 ## 変更を公開する
 
