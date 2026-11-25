@@ -144,7 +144,7 @@ jobs:
           claude_args: |
             --model opus
             --permission-mode default
-            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh search issues:*)"
+            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git grep:*),Bash(gh issue list:*),Bash(gh issue view:*),Bash(gh search issues:*)"
             --json-schema '{"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["title","body"],"properties":{"title":{"type":"string","minLength":1,"description":"issue のタイトル"},"body":{"type":"string","minLength":1,"description":"issue の本文 (Markdown)"}}}}}}'
           prompt: |
             このリポジトリの定期レビュー sweep を実行してください。
@@ -152,6 +152,11 @@ jobs:
             リポジトリ: ${{ github.server_url }}/${{ github.repository }}
             対象範囲: ${{ needs.plan.outputs.base }}..${{ needs.plan.outputs.head }}
             リポジトリの公開範囲: ${{ github.event.repository.private && 'private' || 'public' }}
+
+            使えるのは、ファイルを読むツールと、git diff・git log・git show・git grep、gh issue list・gh issue view・
+            gh search issues だけ。ほかのコマンド (別のリポジトリの tag や release を引く gh api・git ls-remote 等) は拒否される。
+            許可されていないコマンドを含む複合コマンドは全体が拒否されるので、コマンドは 1 つずつ実行する。
+            リポジトリの外の事実を確かめられないときは、確かめられなかったことを指摘の confidence と本文に書く。
 
             手順:
             1. `git log --oneline <base>..<head>` と `git diff --name-status <base>..<head>` で、変更された commit とファイルを把握する。
