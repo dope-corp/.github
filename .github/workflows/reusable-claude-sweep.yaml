@@ -41,6 +41,11 @@ jobs:
     env:
       # mise の shim が mise.toml の他のツールを解決・インストールしないよう、gh に限る
       MISE_ENABLE_TOOLS: gh
+      # 呼び出し元の mise.toml の hook (postinstall 等) は gh 以外のツールを前提にしうるので動かさない
+      MISE_NO_HOOKS: "1"
+      # 呼び出し元が mise.toml で node 等の idiomatic version file を有効にしていると、MISE_ENABLE_TOOLS で
+      # 無効になったツールの .node-version 等を読めずに警告が出るので、gh だけの job では使わない
+      MISE_IDIOMATIC_VERSION_FILE_ENABLE_TOOLS: ""
     outputs:
       mode: ${{ steps.plan.outputs.mode }}
       base: ${{ steps.plan.outputs.base }}
@@ -139,6 +144,11 @@ jobs:
     env:
       # mise の shim が mise.toml の他のツールを解決・インストールしないよう、gh に限る
       MISE_ENABLE_TOOLS: gh
+      # 呼び出し元の mise.toml の hook (postinstall 等) は gh 以外のツールを前提にしうるので動かさない
+      MISE_NO_HOOKS: "1"
+      # 呼び出し元が mise.toml で node 等の idiomatic version file を有効にしていると、MISE_ENABLE_TOOLS で
+      # 無効になったツールの .node-version 等を読めずに警告が出るので、gh だけの job では使わない
+      MISE_IDIOMATIC_VERSION_FILE_ENABLE_TOOLS: ""
     outputs:
       findings: ${{ steps.sweep.outputs.structured_output }}
     steps:
@@ -255,6 +265,8 @@ jobs:
       issues: write # 指摘を issue に起票するため
     env:
       MISE_ENABLE_TOOLS: gh
+      MISE_NO_HOOKS: "1"
+      MISE_IDIOMATIC_VERSION_FILE_ENABLE_TOOLS: ""
     # matrix は 256 job までなので、review の --json-schema で指摘を 50 件までに制限している。
     # 指摘を shell で JSON として分けない (self-hosted runner に jq が無いことがある)。label の作成が重ならないよう
     # 1 件ずつ起票し、1 件の失敗で残りを取り消さない (失敗した run は次回に同じ範囲を再レビューする)

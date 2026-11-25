@@ -25,6 +25,9 @@ jobs:
       contents: read
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
+    env:
+      # 呼び出し元の mise.toml の hook (postinstall 等) は gitleaks 以外のツールを前提にしうるので動かさない
+      MISE_NO_HOOKS: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
